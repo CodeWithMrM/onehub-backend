@@ -1,0 +1,240 @@
+// OneHub — Prisma schema
+// One backend, one database, designed to support multiple stores.
+
+generator client {
+  provider                    = "prisma-client-py"
+  interface                   = "asyncio"
+  recursive_type_depth        = 5
+  enable_experimental_decimal = true
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum StoreMemberRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum OrderStatus {
+  NEW
+  CONFIRMED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum PickupType {
+  ASAP
+  SCHEDULED
+}
+
+// ─────────────────────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id          String   @id @default(uuid())
+  clerkUserId String   @unique
+  name        String?
+  phone       String?
+  role        UserRole @default(CUSTOMER)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  storeMembers StoreMember[]
+  orders       Order[]
+
+  @@index([clerkUserId])
+  @@map("users")
+}
+
+model Store {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  phone       String?
+  address     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members    StoreMember[]
+  categories Category[]
+  products   Product[]
+  orders     Order[]
+
+  @@index([slug])
+  @@index([isActive])
+  @@map("stores")
+}
+
+model StoreMember {
+  id        String          @id @default(uuid())
+  userId    String
+  storeId   String
+  role      StoreMemberRole @default(STAFF)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storeId])
+  @@index([userId])
+  @@index([storeId])
+  @@map("store_members")
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  storeId     String
+  name        String
+  slug        String
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store    Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([storeId, slug])
+  @@index([storeId])
+  @@map("categories")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  storeId     String
+  categoryId  String
+  name        String
+  slug        String
+  description String?
+  price       Decimal  @db.Decimal(10, 2)
+  imageUrl    String?
+  isAvailable Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  store        Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  category     Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  optionGroups ProductOptionGroup[]
+  orderItems   OrderItem[]
+
+  @@unique([storeId, slug])
+  @@index([storeId])
+  @@index([categoryId])
+  @@index([isAvailable])
+  @@map("products")
+}
+
+model ProductOptionGroup {
+  id            String   @id @default(uuid())
+  productId     String
+  name          String
+  required      Boolean  @default(false)
+  multiSelect   Boolean  @default(false)
+  minSelections Int      @default(0)
+  maxSelections Int      @default(1)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options ProductOption[]
+
+  @@index([productId])
+  @@map("product_option_groups")
+}
+
+model ProductOption {
+  id          String   @id @default(uuid())
+  groupId     String
+  name        String
+  price       Decimal  @default(0) @db.Decimal(10, 2)
+  isAvailable Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  group ProductOptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@map("product_options")
+}
+
+model Order {
+  id            String      @id @default(uuid())
+  orderNumber   String      @unique
+  storeId       String
+  userId        String
+  customerName  String
+  customerPhone String
+  status        OrderStatus @default(NEW)
+  pickupType    PickupType  @default(ASAP)
+  pickupTime    String?
+  notes         String?
+  subtotal      Decimal     @db.Decimal(10, 2)
+  total         Decimal     @db.Decimal(10, 2)
+  idempotencyKey String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  store Store       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  user  User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  items OrderItem[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([storeId])
+  @@index([userId])
+  @@index([status])
+  @@index([orderNumber])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String   @id @default(uuid())
+  orderId        String
+  productId      String
+  productName    String
+  unitPrice      Decimal  @db.Decimal(10, 2)
+  quantity       Int
+  customizations Json     @default("[]")
+  total          Decimal  @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// Tracks server-generated order numbers per store so numbering
+// stays sequential and gap-free even under concurrent writes.
+model OrderCounter {
+  storeId String @id
+  value   Int    @default(0)
+
+  @@map("order_counters")
+}
